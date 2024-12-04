@@ -2,6 +2,7 @@
 # Might require higher privileges to grant consent for script authentication based on tenant configuration
 #
 #   Author: Notorious-AFK & AI
+#   Website: Hoyland.Cloud
 #
 #### CSV format: ####
   # UserPrincipalName
