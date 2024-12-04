@@ -1,5 +1,6 @@
 ####
 # Created By: Notorious-AFK
+# Website: Hoyland.Cloud
 # Date: 22-08-2024
 # Description: Created Authentication strength with FIDO2 if none exist, assigns it to the "fracture@*" account using a Conditional Access Policy.
 # Warning: Created using Graph Beta. Subject to change. Best effort scripting.
