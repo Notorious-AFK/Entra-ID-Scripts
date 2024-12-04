@@ -1,0 +1,141 @@
+# Created By: Notorious-AFK
+# Website: Hoyland.Cloud
+# Date: 04-12-2024
+# Problem:
+#   Failed sign-ins still update the "LastInteractiveLogin" and "LastNonInteractiveLogin" field for users.
+#   Guests with the tenant configured in Teams still perform failed non-interactive auths against the tenant, thereby looking "active" from the above fields.
+#
+# Description: 
+#   A script to find more stale accounts that are actively performing failed logins.
+#   Takes in UPN from CSV, changes guest UPNs into queriable UPNs and provides Success/Fail statistics across the selected accounts.
+#   TRY TO LIMIT THE AMOUNT OF USERS! These queries are heavy and can take about a full minute per user for 30d lookback.
+# 
+# Warning: Created using Graph Beta. Subject to change. Best effort scripting.
+#
+# Assumptions: 
+#   Input format is UPN in a CSV file with the first line being "UserPrincipalName". 
+#   Edit Variables to match your running env.
+#
+# Todo: 
+#   Error handling generally.
+####
+
+# Install the Microsoft.Graph module if not already installed and import submodule
+Install-Module Microsoft.Graph -Scope CurrentUser
+Import-Module Microsoft.Graph.Identity.SignIns
+
+# Disconnect from Microsoft Graph if already connected
+Disconnect-MgGraph
+
+# Connect to Microsoft Graph
+Connect-MgGraph -Scopes "AuditLog.Read.All"
+
+####                              ####
+####    EDIT VARIABLES START      ####
+####                              ####
+
+# Path to the CSV file containing UPNs
+$csvPath = "C:\path\to\UPNs.csv"
+$resultspath = "C:\path\to\UserSignInData.csv"
+
+# Define the start date for the query (e.g., looking back 30 days)
+# Only edit the "-days" number. Max lookback is 1 month.
+$startDate = (Get-Date).AddDays(-30).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+####                              ####
+####    EDIT VARIABLES END        ####
+####                              ####
+
+# Import UPNs from the CSV file and process them to remove #EXT# and MS domain
+#### This re-formatting is required for the URI to be parsed correctly in the API query ####
+$UPNs = Import-Csv -Path $csvPath | Select-Object -ExpandProperty UserPrincipalName | ForEach-Object {
+    if ($_ -like "*#EXT#*") {
+        # Remove everything after the first "#"
+        $upnWithoutDomain = $_ -split "#", 2 | Select-Object -First 1
+        # Find the last underscore
+        $lastUnderscoreIndex = $upnWithoutDomain.LastIndexOf('_')
+        if ($lastUnderscoreIndex -ne -1) {
+            # Replace the last underscore with "@"
+            $newUPN = $upnWithoutDomain.Substring(0, $lastUnderscoreIndex) + "@" + $upnWithoutDomain.Substring($lastUnderscoreIndex + 1)
+            "'$newUPN'"
+        } else {
+            "'$upnWithoutDomain'"
+        }
+    } else {
+        "'$_'"
+    }
+}
+
+# Get the total number of UPNs
+$totalUPNs = $UPNs.Count
+Write-Output "Total number of UPNs to process: $totalUPNs"
+
+# Initialize a counter for progress tracking
+$counter = 0
+
+foreach ($UPN in $UPNs) {
+    $counter++
+    Write-Output "Processing $counter of $totalUPNs : $UPN"
+    try {
+        # Get interactive sign-ins
+        Write-Output "Currently checking interactive sign-ins for $UPN"
+        $interactiveUri = "https://graph.microsoft.com/beta/auditLogs/signIns?`$filter=userPrincipalName eq $UPN and createdDateTime ge $startDate and signInEventTypes/any(t:t eq 'interactiveUser')"
+        # Debug
+        # Write-Output "Interactive URI: $interactiveUri"
+        $interactiveSignIns = Invoke-MgGraphRequest -Method GET -Uri $interactiveUri
+
+        # Get non-interactive sign-ins
+        Write-Output "Currently checking non-interactive sign-ins for $UPN"
+        $nonInteractiveUri = "https://graph.microsoft.com/beta/auditLogs/signIns?`$filter=userPrincipalName eq $UPN and createdDateTime ge $startDate and signInEventTypes/any(t:t eq 'nonInteractiveUser')"
+        # Debug
+        # Write-Output "Non-Interactive URI: $nonInteractiveUri"
+        $nonInteractiveSignIns = Invoke-MgGraphRequest -Method GET -Uri $nonInteractiveUri
+        
+        # Initialize counters
+        $interactiveStatus = @{Failed = 0; Successful = 0}
+        $nonInteractiveStatus = @{Failed = 0; Successful = 0}
+
+        # Loop through interactive sign-ins to categorize
+        foreach ($signIn in $interactiveSignIns.value) {
+            switch ($signIn.status.errorCode) {
+                0 { $interactiveStatus.Successful++ }
+                default { $interactiveStatus.Failed++ }
+            }
+        }
+
+        # Loop through non-interactive sign-ins to categorize
+        foreach ($signIn in $nonInteractiveSignIns.value) {
+            switch ($signIn.status.errorCode) {
+                0 { $nonInteractiveStatus.Successful++ }
+                default { $nonInteractiveStatus.Failed++ }
+            }
+        }
+
+        # Output the statistics
+        Write-Output "Interactive Sign-Ins: $($interactiveSignIns.value.Count)"
+        Write-Output "  Successful: $($interactiveStatus.Successful)"
+        Write-Output "  Failed: $($interactiveStatus.Failed)"
+        Write-Output "Non-Interactive Sign-Ins: $($nonInteractiveSignIns.value.Count)"
+        Write-Output "  Successful: $($nonInteractiveStatus.Successful)"
+        Write-Output "  Failed: $($nonInteractiveStatus.Failed)"
+
+        # Combine results
+        $userResults = [PSCustomObject]@{
+            UserPrincipalName = $UPN
+            InteractiveSuccessful = $interactiveStatus.Successful
+            InteractiveFailed = $interactiveStatus.Failed
+            NonInteractiveSuccessful = $nonInteractiveStatus.Successful
+            NonInteractiveFailed = $nonInteractiveStatus.Failed
+        }
+
+        # Append user results to the CSV file
+        $userResults | Export-Csv -Path $resultspath -NoTypeInformation -Append
+
+    } catch {
+        Write-Output "Error processing sign-ins for $UPN : $_"
+        Write-Output "Interactive URI: $interactiveUri"
+        Write-Output "Non-Interactive URI: $nonInteractiveUri"
+    }
+}
+
+Write-Output "Sign-in data appended to $resultspath"
