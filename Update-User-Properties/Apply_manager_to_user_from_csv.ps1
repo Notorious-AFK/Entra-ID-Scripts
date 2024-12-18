@@ -14,9 +14,9 @@
 #   Edit Variables to match your running env.
 #
 # Todo: 
-#   What are all these IF statements. Feels ugly, idk.
-#   Blaming Copilot for this.
-#
+#   1. What are all these IF statements... Feels ugly, idk. Blaming Copilot for this.
+#   2. Add a EID role-check.
+#        As of now if the authenticated user does not have any admin rights, the result is "User  does not exist, skipping..."
 ####
 
 # Install the Microsoft Graph module
